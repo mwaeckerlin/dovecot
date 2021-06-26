@@ -6,6 +6,7 @@ RUN mkdir -p /var/mail/domains
 RUN chown login-user.login-user /var/mail/domains
 ADD local.conf /etc/dovecot/local.conf
 ADD start.sh /start.sh
+RUN ${PKG_REMOVE} apk-tools
 
 FROM mwaeckerlin/scratch
 COPY --from=build / /

@@ -16,6 +16,7 @@ ssl_cert = </etc/letsencrypt/live/${DOMAIN}/fullchain.pem
 ssl_key = </etc/letsencrypt/live/${DOMAIN}/privkey.pem
 ssl_prefer_server_ciphers = yes
 EOF
+    echo "**** TLS configured for ${DOMAIN}}"
 fi
 
 dovecot -F
