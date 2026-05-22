@@ -3,7 +3,7 @@ RUN $PKG_INSTALL dovecot dovecot-mysql dovecot-lmtpd dovecot-pigeonhole-plugin
 RUN addgroup -g 5000 login-user
 RUN adduser -H -D -u 5000 -G login-user login-user
 RUN mkdir -p /var/mail/domains
-RUN chown login-user.login-user /var/mail/domains
+RUN chown login-user:login-user /var/mail/domains
 ADD local.conf /etc/dovecot/local.conf
 ADD start.sh /start.sh
 RUN ${PKG_REMOVE} apk-tools
