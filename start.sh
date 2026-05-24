@@ -1,12 +1,22 @@
 #!/bin/sh -e
 
-cat <<EOF >/etc/dovecot/dovecot-sql.conf
-driver = mysql
-connect = host=${DB_HOST} dbname=${DB_NAME} user=${DB_USER} password=${DB_PASSWORD}
-password_query = select username,password from mailbox where local_part = '%n' and domain = '%d'
-default_pass_scheme = ${DEFAULT_PASS_SCHEME:-SHA512-CRYPT}
+mkdir -p /etc/dovecot/conf.d
+
+cat <<EOF >/etc/dovecot/conf.d/passdb-sql.conf
+mysql maildb {
+  host = ${DB_HOST}
+  dbname = ${DB_NAME}
+  user = ${DB_USER}
+  password = ${DB_PASSWORD}
+}
+
+passdb sql {
+  sql_driver = mysql
+  query = SELECT password FROM mailbox WHERE username = '%{user}'
+  default_password_scheme = ${DEFAULT_PASS_SCHEME:-SHA512-CRYPT}
+}
 EOF
-chmod 600 /etc/dovecot/dovecot-sql.conf
+chmod 600 /etc/dovecot/conf.d/passdb-sql.conf
 
 if test -e /etc/letsencrypt/live/${DOMAIN}/fullchain.pem \
     -a -e /etc/letsencrypt/live/${DOMAIN}/privkey.pem; then
