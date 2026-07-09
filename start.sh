@@ -21,12 +21,12 @@ chmod 600 /etc/dovecot/conf.d/passdb-sql.conf
 if test -e /etc/letsencrypt/live/${DOMAIN}/fullchain.pem \
     -a -e /etc/letsencrypt/live/${DOMAIN}/privkey.pem; then
     cat <<EOF >/etc/dovecot/conf.d/10-ssl.conf
-ssl = required
-ssl_cert = </etc/letsencrypt/live/${DOMAIN}/fullchain.pem
-ssl_key = </etc/letsencrypt/live/${DOMAIN}/privkey.pem
-ssl_prefer_server_ciphers = yes
+ssl = yes
+ssl_server_cert_file = /etc/letsencrypt/live/${DOMAIN}/fullchain.pem
+ssl_server_key_file = /etc/letsencrypt/live/${DOMAIN}/privkey.pem
+ssl_server_prefer_ciphers = server
 EOF
-    echo "**** TLS configured for ${DOMAIN}}"
+    echo "**** TLS configured for ${DOMAIN}"
 fi
 
 dovecot -F
