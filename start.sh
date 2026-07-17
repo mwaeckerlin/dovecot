@@ -18,6 +18,43 @@ passdb sql {
 EOF
 chmod 600 /etc/dovecot/conf.d/passdb-sql.conf
 
+# SPAM_DELIVERY_MODE — write the sieve_before script that decides how
+# mail carrying `X-Spam-Flag: YES` (added by rspamd milter_headers
+# above the add-header score, but not above the reject score) is
+# delivered. Default is `reject` (nothing above reject score reaches
+# here — this file is then a no-op that just documents the mode).
+mkdir -p /etc/dovecot/sieve
+case "${SPAM_DELIVERY_MODE:-reject}" in
+    folder)
+        cat >/etc/dovecot/sieve/spam-to-junk.sieve <<'EOF'
+require ["fileinto", "mailbox"];
+# SPAM_DELIVERY_MODE=folder — deliver spam to the Junk folder.
+if header :contains "X-Spam-Flag" "YES" {
+    fileinto :create "Junk";
+    stop;
+}
+EOF
+        echo "**** SPAM_DELIVERY_MODE=folder — spam → Junk"
+        ;;
+    mark)
+        cat >/etc/dovecot/sieve/spam-to-junk.sieve <<'EOF'
+# SPAM_DELIVERY_MODE=mark — rspamd already added X-Spam-Flag / Level /
+# Status headers upstream (see rspamd/milter_headers.conf). Nothing to
+# do at delivery time; the user's MUA filters on the headers.
+EOF
+        echo "**** SPAM_DELIVERY_MODE=mark — X-Spam-* headers only, INBOX delivery"
+        ;;
+    reject|*)
+        cat >/etc/dovecot/sieve/spam-to-junk.sieve <<'EOF'
+# SPAM_DELIVERY_MODE=reject — rspamd rejects everything above
+# RSPAMD_REJECT_SCORE at SMTP time; nothing reaches this sieve.
+EOF
+        echo "**** SPAM_DELIVERY_MODE=reject — SMTP-time rejection only"
+        ;;
+esac
+# Pre-compile so the first delivery does not pay the parse cost.
+sievec /etc/dovecot/sieve/spam-to-junk.sieve || true
+
 if test -e /etc/letsencrypt/live/${DOMAIN}/fullchain.pem \
     -a -e /etc/letsencrypt/live/${DOMAIN}/privkey.pem; then
     cat <<EOF >/etc/dovecot/conf.d/10-ssl.conf
