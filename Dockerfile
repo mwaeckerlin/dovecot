@@ -15,6 +15,13 @@ ADD sieve/learn-ham.sieve /etc/dovecot/sieve/learn-ham.sieve
 ADD sieve/report-spam.sh /usr/local/bin/report-spam
 ADD sieve/report-ham.sh /usr/local/bin/report-ham
 RUN chmod 755 /usr/local/bin/report-spam /usr/local/bin/report-ham
+# Pre-compile the global sieve scripts: /etc/dovecot/sieve stays
+# root-owned read-only, and the mail user (uid 5000) that executes
+# the scripts at IMAP time has no write access to store the compiled
+# .svbin next to the source — without the precompiled binary every
+# trigger fails with «Permission denied».
+RUN sievec /etc/dovecot/sieve/learn-spam.sieve
+RUN sievec /etc/dovecot/sieve/learn-ham.sieve
 ADD start.sh /start.sh
 RUN ${PKG_REMOVE} apk-tools
 

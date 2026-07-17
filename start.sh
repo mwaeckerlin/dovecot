@@ -52,8 +52,11 @@ EOF
         echo "**** SPAM_DELIVERY_MODE=reject — SMTP-time rejection only"
         ;;
 esac
-# Pre-compile so the first delivery does not pay the parse cost.
-sievec /etc/dovecot/sieve/spam-to-junk.sieve || true
+# Pre-compile: the mail user executing the script at delivery time
+# has no write access to /etc/dovecot/sieve, so the compiled .svbin
+# must exist up front (root compiles it here). A compile error is a
+# hard startup failure — never silently deliver without the filter.
+sievec /etc/dovecot/sieve/spam-to-junk.sieve
 
 if test -e /etc/letsencrypt/live/${DOMAIN}/fullchain.pem \
     -a -e /etc/letsencrypt/live/${DOMAIN}/privkey.pem; then
