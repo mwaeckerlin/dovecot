@@ -40,6 +40,9 @@ ENV LOCAL_DOMAINS ""
 # whenever a user moves a message to / out of the Junk folder in IMAP.
 ENV RSPAMD_HOST      "rspamd"
 ENV RSPAMD_CTL_PORT  "11334"
+# Force auth over TLS by default. Set to "yes" only if you deliberately
+# want to allow cleartext logins on unencrypted connections.
+ENV DOVECOT_ALLOW_CLEARTEXT "no"
 EXPOSE 143
 EXPOSE 993
 USER root

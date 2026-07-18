@@ -18,6 +18,17 @@ passdb sql {
 EOF
 chmod 600 /etc/dovecot/conf.d/passdb-sql.conf
 
+# Force auth over TLS by default (DOVECOT_ALLOW_CLEARTEXT=no): cleartext
+# mechanisms are only offered on an encrypted channel, so a password is
+# never sent in the clear. This requires TLS to be available (a cert at
+# /etc/letsencrypt/live/$DOMAIN/) — without a cert AND without explicitly
+# setting DOVECOT_ALLOW_CLEARTEXT=yes there is no usable auth, which is
+# the intended secure default. Soften only deliberately.
+cat <<EOF >/etc/dovecot/conf.d/10-auth-cleartext.conf
+auth_allow_cleartext = ${DOVECOT_ALLOW_CLEARTEXT:-no}
+EOF
+echo "**** auth_allow_cleartext = ${DOVECOT_ALLOW_CLEARTEXT:-no}"
+
 # SPAM_DELIVERY_MODE — write the sieve_before script that decides how
 # mail carrying `X-Spam-Flag: YES` (added by rspamd milter_headers
 # above the add-header score, but not above the reject score) is
