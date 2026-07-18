@@ -32,3 +32,18 @@ connection:
 | `DOVECOT_ALLOW_CLEARTEXT` | `no`             | Allow cleartext auth on unencrypted connections. See above.      |
 | `RSPAMD_HOST` / `RSPAMD_CTL_PORT` | `rspamd` / `11334` | Rspamd controller the IMAPSieve Bayes autotrainer pipes to (`rspamc learn_spam/learn_ham`). |
 | `SPAM_DELIVERY_MODE`      | `reject`         | `reject` / `mark` / `folder` — how spam-tagged mail is delivered (see mailservice README). |
+| `DOVECOT_DEBUG_AUTH`      | `no`             | Diagnostics override: `yes` enables verbose auth debug logging (`log_debug = category=auth`). Never a production default — debug lines expose per-login details to every log reader. |
+
+## Security trade-offs
+
+- **Container runs as root:** the dovecot master process needs root to
+  bind its service listeners and to spawn per-login workers; every
+  IMAP/POP3 session, sieve execution and mail delivery then runs as the
+  unprivileged mail user (uid/gid 5000). This deviates from the
+  image family's non-root default deliberately.
+- **Internal listeners without authentication:** LMTP (port 24) and the
+  SASL socket for postfix (port 12345) trust the docker network they
+  are attached to. Never publish these ports; only attach services to
+  the shared networks that genuinely need them.
+- **Auth debug logging** is off by default (`DOVECOT_DEBUG_AUTH=no`),
+  see the environment table above.

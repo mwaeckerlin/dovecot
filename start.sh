@@ -29,6 +29,17 @@ auth_allow_cleartext = ${DOVECOT_ALLOW_CLEARTEXT:-no}
 EOF
 echo "**** auth_allow_cleartext = ${DOVECOT_ALLOW_CLEARTEXT:-no}"
 
+# Verbose auth debug logging is a deliberate diagnostics override, never
+# a production default (DOVECOT_DEBUG_AUTH=no): auth debug lines expose
+# per-login details (users, mechanisms, remote IPs) to everyone who can
+# read the container logs and flood stdout on busy servers.
+if test "${DOVECOT_DEBUG_AUTH:-no}" = "yes"; then
+    cat <<EOF >/etc/dovecot/conf.d/10-debug.conf
+log_debug = category=auth
+EOF
+    echo "**** auth debug logging enabled (DOVECOT_DEBUG_AUTH=yes)"
+fi
+
 # SPAM_DELIVERY_MODE — write the sieve_before script that decides how
 # mail carrying `X-Spam-Flag: YES` (added by rspamd milter_headers
 # above the add-header score, but not above the reject score) is
@@ -69,8 +80,8 @@ esac
 # hard startup failure — never silently deliver without the filter.
 sievec /etc/dovecot/sieve/spam-to-junk.sieve
 
-if test -e /etc/letsencrypt/live/${DOMAIN}/fullchain.pem \
-    -a -e /etc/letsencrypt/live/${DOMAIN}/privkey.pem; then
+if test -e "/etc/letsencrypt/live/${DOMAIN}/fullchain.pem" \
+    -a -e "/etc/letsencrypt/live/${DOMAIN}/privkey.pem"; then
     cat <<EOF >/etc/dovecot/conf.d/10-ssl.conf
 ssl = yes
 ssl_server_cert_file = /etc/letsencrypt/live/${DOMAIN}/fullchain.pem
