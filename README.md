@@ -7,6 +7,22 @@ certificate at `/etc/letsencrypt/live/$DOMAIN/` (fullchain.pem +
 privkey.pem) so TLS is configured. With a cert present, dovecot serves
 IMAPS (993), POP3S (995) and STARTTLS on the plain ports.
 
+## Headless image
+
+The image is headless: a small compiled `init` binary writes the
+runtime configuration (SQL passdb, TLS, auth policy, spam delivery
+sieve) into `/etc/dovecot/conf.d/` from the environment and execs the
+dovecot daemon — no shell, no busybox, no package manager in the
+shipped image. The Bayes autotrainer wrappers (`report-spam` /
+`report-ham`, invoked by the IMAPSieve learn scripts) are one static
+binary that execs `rspamc`. `init --healthcheck` TCP-probes the IMAP
+listener on 127.0.0.1:143 and can be wired as a Docker healthcheck:
+
+```yaml
+healthcheck:
+  test: ["CMD", "/usr/bin/init", "--healthcheck"]
+```
+
 ## Authentication over TLS (secure default)
 
 `DOVECOT_ALLOW_CLEARTEXT` (default **`no`**) controls whether cleartext
