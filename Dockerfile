@@ -75,6 +75,15 @@ ENV CONTAINERNAME="dovecot" \
     DOMAIN="" \
     DEFAULT_PASS_SCHEME="SHA512-CRYPT" \
     SPAM_DELIVERY_MODE="reject"
+# Sieve script size limit — high by default (family rule: artificial
+# limits high, configurable, documented), lowerable on a small box to
+# shrink the authenticated ManageSieve upload/compile DoS surface.
+ENV SIEVE_MAX_SCRIPT_SIZE="500M"
+# Optional per-mailbox quota from the PostfixAdmin `mailbox.quota`
+# column (bytes; <=0 = unlimited). Off by default (no behaviour change);
+# when "yes", over-quota delivery tempfails so the sender retries,
+# never a silent drop. See README «Mailbox quota».
+ENV DOVECOT_QUOTA="no"
 # Rspamd host:port for the Bayes autotrainer — dovecot pipes mail here
 # via `rspamc -h <RSPAMD_HOST>:<RSPAMD_CTL_PORT> learn_spam/learn_ham`
 # whenever a user moves a message to / out of the Junk folder in IMAP.

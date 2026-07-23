@@ -1,0 +1,21 @@
+# Build / standalone smoke compose — build the image on its own for
+# testing. Not a production deployment; see mwaeckerlin/mailservice for
+# the intended context (database, postfix, rspamd wiring). A bare
+# dovecot without a database has no usable auth — this compose exists to
+# build the image and run the headless/config contracts, not to serve
+# mail.
+
+services:
+  dovecot:
+    image: mwaeckerlin/dovecot
+    build: .
+    ports:
+      # loopback only: a bare dovecot without DB wiring is a smoke-test
+      # artefact — never expose it beyond the local machine
+      - "127.0.0.1:1143:143"
+    healthcheck:
+      test: ["CMD", "/usr/bin/init", "--healthcheck"]
+      interval: 2s
+      timeout: 5s
+      retries: 20
+      start_period: 3s

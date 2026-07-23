@@ -64,6 +64,51 @@ env_or(const char *name, const std::string &fallback = {}) {
   return (v && *v) ? std::string(v) : fallback;
 }
 
+// Every env value is rendered into a dovecot config file (plain
+// key=value lines, or an SQL passdb block). An unvalidated value — a
+// newline above all — would inject arbitrary extra directives (config
+// injection). Operator input is input: whitelist-validate each value
+// class and refuse to start on anything malformed. Pinned by
+// tests/config-validation.sh.
+[[noreturn]] void
+die_invalid(const char *var, const std::string &value) {
+  std::cerr << "**** ERROR: invalid " << var << " \"" << value
+            << "\" — refusing to start" << std::endl;
+  std::exit(1);
+}
+
+// Empty stays allowed: every knob is optional — validation constrains
+// only what IS set.
+void
+check_chars(const char *var, const std::string &v, const std::string &extra) {
+  for (char c : v)
+    if (!std::isalnum(static_cast<unsigned char>(c)) &&
+        extra.find(c) == std::string::npos)
+      die_invalid(var, v);
+}
+
+// A secret must not be echoed back into the container log on error.
+void
+check_no_crlf_secret(const char *var, const std::string &v) {
+  if (v.find_first_of("\r\n") != std::string::npos) {
+    std::cerr << "**** ERROR: invalid " << var
+              << " (contains a newline) — refusing to start" << std::endl;
+    std::exit(1);
+  }
+}
+
+// dovecot data sizes: digits with an optional single k/M/G/T suffix
+// ("500M", "1G", "0" = unlimited).
+void
+check_size(const char *var, const std::string &v) {
+  auto suffix = v.find_first_not_of("0123456789");
+  if (v.empty() || suffix == 0) die_invalid(var, v);
+  if (suffix == std::string::npos) return;
+  if (suffix != v.size() - 1 ||
+      std::string("kMGT").find(v[suffix]) == std::string::npos)
+    die_invalid(var, v);
+}
+
 void
 write_file(const fs::path &p, const std::string &content) {
   std::ofstream out(p, std::ios::binary | std::ios::trunc);
@@ -191,6 +236,89 @@ write_spam_delivery_mode() {
     throw std::runtime_error("sievec " + sieve.string() + " failed: " + out);
 }
 
+// E2: sieve_max_script_size is configurable (default 500M, following
+// the family rule «artificial limits high, but configurable and
+// documented»). An operator on a small box can lower the authenticated
+// ManageSieve upload/compile DoS surface. Written to conf.d so it wins
+// over the local.conf default (conf.d is included after local.conf).
+void
+write_sieve_limits() {
+  const std::string size = env_or("SIEVE_MAX_SCRIPT_SIZE", "500M");
+  write_file(fs::path(CONF_D) / "10-sieve-limits.conf",
+             "sieve_max_script_size = " + size + "\n");
+  std::cerr << "**** sieve_max_script_size = " << size << std::endl;
+}
+
+// The userdb provides uid/gid/home for every mailbox. It lives here (not
+// in local.conf) so DOVECOT_QUOTA can switch its backend without a
+// second, non-merging userdb block:
+//   off  → static (uid/gid/home only; identical to the previous default)
+//   on   → sql, returning uid/gid/home AND the per-user quota limit from
+//          the PostfixAdmin `mailbox.quota` column (bytes; <=0 =
+//          unlimited → quota_storage_size stays NULL, user unaffected).
+// The sql form reuses the `mysql maildb` connection from passdb-sql.conf.
+void
+write_userdb() {
+  const std::string home =
+      "/var/mail/domains/%{user | domain}/%{user | username}";
+  std::string content;
+  if (env_or("DOVECOT_QUOTA", "no") == "yes") {
+    content =
+        "userdb sql {\n"
+        "  sql_driver = mysql\n"
+        "  query = SELECT 5000 AS uid, 5000 AS gid, "
+        "CONCAT('/var/mail/domains/', SUBSTRING_INDEX(username,'@',-1), "
+        "'/', SUBSTRING_INDEX(username,'@',1)) AS home, "
+        "CASE WHEN quota > 0 THEN CONCAT(quota, 'B') END "
+        "AS quota_storage_size "
+        "FROM mailbox WHERE username = '%{user}'\n"
+        "}\n";
+    std::cerr << "**** userdb sql (per-mailbox quota from PostfixAdmin)"
+              << std::endl;
+  } else {
+    content =
+        "userdb static {\n"
+        "  fields {\n"
+        "    uid = 5000\n"
+        "    gid = 5000\n"
+        "    home = " + home + "\n"
+        "  }\n"
+        "}\n";
+  }
+  write_file(fs::path(CONF_D) / "05-userdb.conf", content);
+}
+
+// E5: optional per-mailbox quota (Dovecot 2.4 syntax). Off by default
+// (DOVECOT_QUOTA=no) — no behaviour change. Enables the count-backend
+// quota plugin and enforcement; the per-user limit comes via the sql
+// userdb (write_userdb). Over-quota delivery tempfails
+// (quota_full_tempfail=yes in local.conf; grace 0 so a full mailbox
+// defers cleanly instead of a silent one-shot overage), so the sender
+// retries and eventually bounces — never a silent drop.
+void
+write_quota() {
+  if (env_or("DOVECOT_QUOTA", "no") != "yes") return;
+  write_file(fs::path(CONF_D) / "90-quota.conf",
+      "mail_plugins {\n"
+      "  quota = yes\n"
+      "}\n"
+      "\n"
+      "protocol imap {\n"
+      "  mail_plugins {\n"
+      "    imap_quota = yes\n"
+      "  }\n"
+      "}\n"
+      "\n"
+      "quota userquota {\n"
+      "  driver = count\n"
+      "}\n"
+      "\n"
+      "quota_enforce = yes\n"
+      "quota_storage_grace = 0\n");
+  std::cerr << "**** per-mailbox quota enabled (PostfixAdmin mailbox.quota)"
+            << std::endl;
+}
+
 void
 write_ssl() {
   const std::string domain = env_or("DOMAIN");
@@ -223,6 +351,34 @@ tcp_probe(const std::string &host, int port) {
 } // namespace
 
 int main(int argc, char *argv[]) try {
+  // Validate every env value before it is rendered into a config file —
+  // also on the --healthcheck path, so a misconfigured container reports
+  // unhealthy instead of probing a listener that never came up. DB_*
+  // land in the SQL passdb / quota dict blocks; a newline would inject
+  // extra dovecot directives (config injection).
+  check_chars("DB_HOST", env_or("DB_HOST"), ".-_:,");
+  check_chars("DB_NAME", env_or("DB_NAME"), "._-");
+  check_chars("DB_USER", env_or("DB_USER"), "._-");
+  check_no_crlf_secret("DB_PASSWORD", env_or("DB_PASSWORD"));
+  check_chars("DEFAULT_PASS_SCHEME",
+              env_or("DEFAULT_PASS_SCHEME", "SHA512-CRYPT"), "-");
+  check_chars("DOMAIN", env_or("DOMAIN"), ".-");
+  check_size("SIEVE_MAX_SCRIPT_SIZE", env_or("SIEVE_MAX_SCRIPT_SIZE", "500M"));
+  {
+    const std::string allow = env_or("DOVECOT_ALLOW_CLEARTEXT", "no");
+    if (allow != "yes" && allow != "no")
+      die_invalid("DOVECOT_ALLOW_CLEARTEXT", allow);
+    const std::string dbg = env_or("DOVECOT_DEBUG_AUTH", "no");
+    if (dbg != "yes" && dbg != "no")
+      die_invalid("DOVECOT_DEBUG_AUTH", dbg);
+    const std::string quota = env_or("DOVECOT_QUOTA", "no");
+    if (quota != "yes" && quota != "no")
+      die_invalid("DOVECOT_QUOTA", quota);
+    const std::string mode = env_or("SPAM_DELIVERY_MODE", "reject");
+    if (mode != "reject" && mode != "mark" && mode != "folder")
+      die_invalid("SPAM_DELIVERY_MODE", mode);
+  }
+
   if (argc > 1 && std::string(argv[1]) == "--healthcheck")
     return tcp_probe("127.0.0.1", 143);
 
@@ -230,9 +386,12 @@ int main(int argc, char *argv[]) try {
   fs::create_directories(SIEVE_DIR);
 
   write_passdb();
+  write_userdb();
   write_auth_cleartext();
   write_debug();
   write_spam_delivery_mode();
+  write_sieve_limits();
+  write_quota();
   write_ssl();
 
   std::cerr << "**** Starting dovecot" << std::endl;
