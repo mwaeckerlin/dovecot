@@ -46,7 +46,7 @@ RUN rm -f /usr/libexec/dovecot/decode2text.sh
 # actually needs into /root/ — no shell, no package manager, no
 # busybox. musl's `ldd` accepts exactly ONE file per invocation, so
 # deps are gathered in a per-file loop (this also pulls libmariadb for
-# the SQL passdb); /lib/ld-musl-x86_64.so.1 is the ELF interpreter and
+# the SQL passdb); /lib/ld-musl-<arch>.so.1 is the ELF interpreter and
 # listed explicitly.
 RUN tar cph \
         /etc/dovecot /var/mail/domains /run/dovecot /var/lib/dovecot \
@@ -57,7 +57,7 @@ RUN tar cph \
         /usr/bin/doveconf /usr/bin/doveadm /usr/bin/sievec \
         /usr/bin/rspamc \
         /usr/local/bin/report-spam /usr/local/bin/report-ham \
-        /usr/bin/init /lib/ld-musl-x86_64.so.1 /tmp \
+        /usr/bin/init /lib/ld-musl-*.so.1 /tmp \
         $(for f in /usr/sbin/dovecot /usr/libexec/dovecot/* \
                    /usr/lib/dovecot/*.so* /usr/lib/dovecot/*/*.so* \
                    /usr/bin/doveconf /usr/bin/doveadm /usr/bin/sievec \
