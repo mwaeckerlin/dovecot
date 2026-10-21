@@ -1,5 +1,11 @@
 # Changelog
 
+- 2026-10-22 **3.5.2**
+    - `DB_PORT` sets the port of the PostfixAdmin database; unset, the MySQL default port stays
+    - `DB_SSL=no` lets dovecot connect to a database without TLS, such as MariaDB 10, which before needed a change in the init source; unset, nothing changes
+    - `DOVECOT_MAX_USERIP_CONNECTIONS` (default `1000`) limits the simultaneous connections of one user from one IP address, `DOVECOT_SIEVE_MAX_USERIP_CONNECTIONS` (default `100`) the same for ManageSieve
+    - A test starts the image and reads the configuration dovecot parsed for every new variable, unset and set
+
 - 2026-09-26 **3.5.1**
     - The image builds on arm64 as well as on amd64 and is published for both under one tag, built and published automatically on every change and every week
 

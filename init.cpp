@@ -13,20 +13,24 @@ Behaviour (port of the former start.sh, contract unchanged):
 
   1. conf.d/passdb-sql.conf (mode 0600): PostfixAdmin database
      credentials for the SQL passdb; DEFAULT_PASS_SCHEME defaults to
-     SHA512-CRYPT (PostfixAdmin's php_crypt).
-  2. conf.d/10-auth-cleartext.conf: auth_allow_cleartext from
+     SHA512-CRYPT (PostfixAdmin's php_crypt). DB_PORT and DB_SSL add a
+     `port` / `ssl` line only when set.
+  2. conf.d/10-connection-limits.conf: mail_max_userip_connections
+     from DOVECOT_MAX_USERIP_CONNECTIONS (default 1000) and, for
+     ManageSieve, DOVECOT_SIEVE_MAX_USERIP_CONNECTIONS (default 100).
+  3. conf.d/10-auth-cleartext.conf: auth_allow_cleartext from
      DOVECOT_ALLOW_CLEARTEXT (default no — cleartext mechanisms only
      over TLS, a password never travels unencrypted).
-  3. conf.d/10-debug.conf (log_debug=category=auth) only when
+  4. conf.d/10-debug.conf (log_debug=category=auth) only when
      DOVECOT_DEBUG_AUTH=yes — a diagnostics override, never a
      production default.
-  4. sieve/spam-to-junk.sieve according to SPAM_DELIVERY_MODE
+  5. sieve/spam-to-junk.sieve according to SPAM_DELIVERY_MODE
      (reject / mark / folder) and pre-compiled with sievec — the mail
      user executing it at delivery time has no write access to
      /etc/dovecot/sieve. A compile error is a hard startup failure.
-  5. conf.d/10-ssl.conf when /etc/letsencrypt/live/$DOMAIN/ holds
+  6. conf.d/10-ssl.conf when /etc/letsencrypt/live/$DOMAIN/ holds
      fullchain.pem + privkey.pem.
-  6. exec dovecot -F.
+  7. exec dovecot -F.
 
 Supports --healthcheck: TCP-probes the IMAP listener at 127.0.0.1:143.
 
@@ -97,6 +101,15 @@ check_no_crlf_secret(const char *var, const std::string &v) {
   }
 }
 
+void
+check_num(const char *var, const std::string &v, long min, long max) {
+  if (v.empty() || v.size() > 9 ||
+      v.find_first_not_of("0123456789") != std::string::npos)
+    die_invalid(var, v);
+  const long n = std::atol(v.c_str());
+  if (n < min || n > max) die_invalid(var, v);
+}
+
 // dovecot data sizes: digits with an optional single k/M/G/T suffix
 // ("500M", "1G", "0" = unlimited).
 void
@@ -146,12 +159,16 @@ run_capture(const std::vector<const char *> &argv, std::string &out) {
 
 void
 write_passdb() {
+  const std::string port = env_or("DB_PORT");
+  const std::string ssl  = env_or("DB_SSL");
   const std::string content =
       "mysql maildb {\n"
       "  host = "     + env_or("DB_HOST")     + "\n"
+      + (port.empty() ? "" : "  port = " + port + "\n") +
       "  dbname = "   + env_or("DB_NAME")     + "\n"
       "  user = "     + env_or("DB_USER")     + "\n"
       "  password = " + env_or("DB_PASSWORD") + "\n"
+      + (ssl.empty() ? "" : "  ssl = " + ssl + "\n") +
       "}\n"
       "\n"
       "passdb sql {\n"
@@ -247,6 +264,21 @@ write_sieve_limits() {
   write_file(fs::path(CONF_D) / "10-sieve-limits.conf",
              "sieve_max_script_size = " + size + "\n");
   std::cerr << "**** sieve_max_script_size = " << size << std::endl;
+}
+
+// Written to conf.d so it wins over local.conf (included before it).
+void
+write_connection_limits() {
+  const std::string all   = env_or("DOVECOT_MAX_USERIP_CONNECTIONS", "1000");
+  const std::string sieve = env_or("DOVECOT_SIEVE_MAX_USERIP_CONNECTIONS", "100");
+  write_file(fs::path(CONF_D) / "10-connection-limits.conf",
+             "mail_max_userip_connections = " + all + "\n"
+             "\n"
+             "protocol sieve {\n"
+             "  mail_max_userip_connections = " + sieve + "\n"
+             "}\n");
+  std::cerr << "**** mail_max_userip_connections = " << all
+            << " (ManageSieve " << sieve << ")" << std::endl;
 }
 
 // The userdb provides uid/gid/home for every mailbox. It lives here (not
@@ -364,7 +396,15 @@ int main(int argc, char *argv[]) try {
               env_or("DEFAULT_PASS_SCHEME", "SHA512-CRYPT"), "-");
   check_chars("DOMAIN", env_or("DOMAIN"), ".-");
   check_size("SIEVE_MAX_SCRIPT_SIZE", env_or("SIEVE_MAX_SCRIPT_SIZE", "500M"));
+  if (!env_or("DB_PORT").empty()) check_num("DB_PORT", env_or("DB_PORT"), 1, 65535);
+  check_num("DOVECOT_MAX_USERIP_CONNECTIONS",
+            env_or("DOVECOT_MAX_USERIP_CONNECTIONS", "1000"), 1, 1000000);
+  check_num("DOVECOT_SIEVE_MAX_USERIP_CONNECTIONS",
+            env_or("DOVECOT_SIEVE_MAX_USERIP_CONNECTIONS", "100"), 1, 1000000);
   {
+    const std::string ssl = env_or("DB_SSL");
+    if (!ssl.empty() && ssl != "yes" && ssl != "no")
+      die_invalid("DB_SSL", ssl);
     const std::string allow = env_or("DOVECOT_ALLOW_CLEARTEXT", "no");
     if (allow != "yes" && allow != "no")
       die_invalid("DOVECOT_ALLOW_CLEARTEXT", allow);
@@ -386,6 +426,7 @@ int main(int argc, char *argv[]) try {
   fs::create_directories(SIEVE_DIR);
 
   write_passdb();
+  write_connection_limits();
   write_userdb();
   write_auth_cleartext();
   write_debug();

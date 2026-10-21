@@ -78,6 +78,11 @@ _reject cleartext_bad         DOVECOT_ALLOW_CLEARTEXT "maybe"
 _reject debug_bad             DOVECOT_DEBUG_AUTH "loud"
 _reject quota_bad             DOVECOT_QUOTA "sometimes"
 _reject spam_mode_bad         SPAM_DELIVERY_MODE "quarantine"
+_reject db_port_injection     DB_PORT     $'3306\nhost = evil'
+_reject db_port_range         DB_PORT     "70000"
+_reject db_ssl_bad            DB_SSL      "required"
+_reject userip_bad            DOVECOT_MAX_USERIP_CONNECTIONS "1000; x"
+_reject sieve_userip_zero     DOVECOT_SIEVE_MAX_USERIP_CONNECTIONS "0"
 
 _accept defaults
 _accept explicit_values \
@@ -85,6 +90,10 @@ _accept explicit_values \
     -e DB_PASSWORD='s3cret-Pa55!' \
     -e DB_HOST=postfixadmin-db \
     -e DB_NAME=postfixadmin \
+    -e DB_PORT=3306 \
+    -e DB_SSL=no \
+    -e DOVECOT_MAX_USERIP_CONNECTIONS=1000 \
+    -e DOVECOT_SIEVE_MAX_USERIP_CONNECTIONS=100 \
     -e DOMAIN=example.com \
     -e DEFAULT_PASS_SCHEME=SHA512-CRYPT \
     -e SIEVE_MAX_SCRIPT_SIZE=500M \

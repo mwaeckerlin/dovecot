@@ -72,9 +72,15 @@ ENV CONTAINERNAME="dovecot" \
     DB_PASSWORD="" \
     DB_HOST="" \
     DB_NAME="" \
+    DB_PORT="" \
+    DB_SSL="" \
     DOMAIN="" \
     DEFAULT_PASS_SCHEME="SHA512-CRYPT" \
     SPAM_DELIVERY_MODE="reject"
+# Simultaneous connections of one user from one IP address: all
+# protocols, and ManageSieve on its own.
+ENV DOVECOT_MAX_USERIP_CONNECTIONS="1000" \
+    DOVECOT_SIEVE_MAX_USERIP_CONNECTIONS="100"
 # Sieve script size limit — high by default (family rule: artificial
 # limits high, configurable, documented), lowerable on a small box to
 # shrink the authenticated ManageSieve upload/compile DoS surface.
