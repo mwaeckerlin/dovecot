@@ -1,0 +1,4 @@
+services:
+  dovecot:
+    image: mwaeckerlin/dovecot
+    build: .
