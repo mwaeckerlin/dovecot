@@ -1,5 +1,8 @@
 # Changelog
 
+- 2026-10-23 **3.5.3**
+    - The version line 3 is published as `mwaeckerlin/dovecot:3` from the branch `3`, on every push to it and every week from the run on master, so it gets the security fixes of its base images; it is tested before it is published
+
 - 2026-10-22 **3.5.2**
     - `DB_PORT` sets the port of the PostfixAdmin database; unset, the MySQL default port stays
     - `DB_SSL=no` lets dovecot connect to a database without TLS, such as MariaDB 10, which before needed a change in the init source; unset, nothing changes
