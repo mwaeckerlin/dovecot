@@ -42,11 +42,22 @@ _expect_setting() {
     fi
 }
 
-# the lines a service sends on connect, up to the one that matches $3
+# one line of the text $1 matches the pattern $2
+_has_line() {
+    local line
+    while IFS= read -r line; do
+        [[ "${line}" =~ $2 ]] && return 0
+    done <<< "$1"
+    return 1
+}
+
+# the lines a service sends on connect, up to the one that matches $2;
+# $3, when given, is sent first, as the client half of a handshake
 _greeting() {
-    local port="$1" until="$2" address line
+    local port="$1" until="$2" hello="${3:-}" address line
     address="$(docker port "${NAME}" "${port}/tcp")"
     exec 3<> "/dev/tcp/${address%:*}/${address##*:}" || return 1
+    [[ -n "${hello}" ]] && printf '%b' "${hello}" >&3
     while read -t 10 -r line <&3; do
         echo "${line}"
         [[ "${line}" =~ ${until} ]] && break
@@ -56,10 +67,10 @@ _greeting() {
 
 # waits until the service on $1 sends a line that matches $2
 _wait_for() {
-    local port="$1" until="$2" answer=""
+    local port="$1" until="$2" hello="${3:-}" answer=""
     for _ in $(seq 1 60); do
-        answer="$(_greeting "${port}" "${until}" 2> /dev/null)"
-        [[ "${answer}" =~ ${until} ]] && break
+        answer="$(_greeting "${port}" "${until}" "${hello}" 2> /dev/null)"
+        _has_line "${answer}" "${until}" && break
         sleep 1
     done
     echo "${answer}"
@@ -68,7 +79,7 @@ _wait_for() {
 _expect_answer() {
     local name="$1" port="$2" pattern="$3" answer
     answer="$(_wait_for "${port}" "${pattern}")"
-    if [[ "${answer}" =~ ${pattern} ]]; then
+    if _has_line "${answer}" "${pattern}"; then
         _pass "${name}"
     else
         _fail "${name}" "port ${port} answered '${answer:-nothing}', expected ${pattern} / log: $(docker logs "${NAME}" 2>&1)"
@@ -111,7 +122,8 @@ _expect_answer imap_starttls 143 '^\* OK .*STARTTLS'
 _expect_answer pop3_greeting 110 '^\+OK'
 _expect_answer lmtp_greeting 24 '^220 '
 _expect_answer managesieve_greeting 4190 '^OK '
-SASL="$(_wait_for 12345 '^DONE')"
+# postfix opens the auth protocol with VERSION and CPID, and dovecot answers with its mechanisms
+SASL="$(_wait_for 12345 '^DONE' "VERSION\t1\t2\nCPID\t$$\n")"
 if [[ "${SASL}" == *$'MECH\tPLAIN'* && "${SASL}" == *$'MECH\tLOGIN'* ]]; then
     _pass "sasl_plain_login"
 else
@@ -126,7 +138,7 @@ else
 fi
 
 RUNTIME="$(docker exec "${NAME}" doveconf -n 2>&1)"
-if [[ $? -eq 0 && "${RUNTIME}" == *"db.example.com"* && "${RUNTIME}" == *"ssl_server_cert_file = /etc/letsencrypt/live/mail.example.com/fullchain.pem"* ]]; then
+if [[ $? -eq 0 && "${RUNTIME}" == *"db.example.com"* && "${RUNTIME}" == *"cert_file = /etc/letsencrypt/live/mail.example.com/fullchain.pem"* ]]; then
     _pass "doveconf_runtime"
 else
     _fail "doveconf_runtime" "${RUNTIME}"
