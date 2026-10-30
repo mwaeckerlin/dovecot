@@ -1,5 +1,8 @@
 # Changelog
 
+- 2026-10-30 **3.5.6**
+    - The test of the admin sieve block measures the default case with a check that can pass: it asserted with the helper for «this block holds no such line», which demands that the block exists, while without `SIEVE_ADMIN_SCRIPT` it must not exist at all.
+
 - 2026-10-30 **3.5.5**
     - Sieve filters take effect again. The home of a mail user held his scripts in the root of his maildir, so dovecot took the active script `.dovecot.sieve` for a mailbox, failed to open it and aborted every delivery a rule touched. The message then reached INBOX through the implicit keep and no rule of the script took effect, which looks exactly like one single filter being broken. The home now lies under `/var/mail/domains/.sieve/<domain>/<localpart>`, inside the same volume and outside the mailbox namespace, and the start moves what an older image left in the maildir root, so no user loses a filter.
     - A webmail that showed a folder named `dovecot` with a subfolder `sieve` loses it with the same change: that entry was the script file.
