@@ -87,6 +87,17 @@ _expect_in_block() {
     fi
 }
 
+# No block of that name exists at all.
+_expect_no_block() {
+    local name="$1" head="$2" block
+    block=$(_block "${head}")
+    if [[ -z "${block}" ]]; then
+        _pass "${name}"
+    else
+        _fail "${name}" "block «${head}» exists: ${block}"
+    fi
+}
+
 # The block holds no line matching the extended regular expression.
 _expect_not_in_block() {
     local name="$1" head="$2" pattern="$3" block
@@ -139,7 +150,7 @@ _expect_refuses_to_start() {
 # SIEVE_ADMIN_SCRIPT: a script of the operator that runs before the
 # script of every user and survives every save in the webmail.
 if _start admin_sieve_default; then
-    _expect_not_in_block admin_sieve_default_absent "sieve_script admin-before" '.'
+    _expect_no_block admin_sieve_default_absent "sieve_script admin-before"
 fi
 
 if _start admin_sieve \
