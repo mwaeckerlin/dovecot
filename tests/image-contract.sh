@@ -105,6 +105,17 @@ _expect_setting mail_driver "maildir"
 _expect_setting mail_path "/var/mail/domains/%{user | domain}/%{user | username}"
 _expect_setting protocols "imap pop3 lmtp sieve"
 
+# The home holds the Sieve scripts and must stay outside the root of the
+# maildir. Inside it, Dovecot takes the active script `.dovecot.sieve`
+# for a mailbox, fails to open it and aborts every delivery a rule
+# touches, so no filter of any user takes effect.
+HOME_SETTING="$(docker run --rm --pull=never --entrypoint /usr/bin/doveconf "${IMAGE}" -n 2>&1)"
+if _has_line "${HOME_SETTING}" 'home = /var/mail/domains/\.sieve/'; then
+    _pass "sieve_home_outside_maildir"
+else
+    _fail "sieve_home_outside_maildir" "home is not under /var/mail/domains/.sieve: ${HOME_SETTING}"
+fi
+
 mkdir -p "${WORK}/letsencrypt/live/mail.example.com"
 openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj "/CN=mail.example.com" \
     -keyout "${WORK}/letsencrypt/live/mail.example.com/privkey.pem" \
