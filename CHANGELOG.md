@@ -1,5 +1,10 @@
 # Changelog
 
+- 2026-10-30 **3.5.5**
+    - Sieve filters take effect again. The home of a mail user held his scripts in the root of his maildir, so dovecot took the active script `.dovecot.sieve` for a mailbox, failed to open it and aborted every delivery a rule touched. The message then reached INBOX through the implicit keep and no rule of the script took effect, which looks exactly like one single filter being broken. The home now lies under `/var/mail/domains/.sieve/<domain>/<localpart>`, inside the same volume and outside the mailbox namespace, and the start moves what an older image left in the maildir root, so no user loses a filter.
+    - A webmail that showed a folder named `dovecot` with a subfolder `sieve` loses it with the same change: that entry was the script file.
+    - `SIEVE_ADMIN_SCRIPT` holds a Sieve script of the operator that runs before every user script and that the webmail cannot overwrite. It may route and file, never `reject`: a reject at delivery answers the envelope sender, which unwanted mail forges, so a rule that refuses belongs in postfix. A script that does not compile stops the start, because a filter that silently does nothing is the defect this mechanism exists to avoid.
+
 - 2026-10-23 **3.5.4**
     - The weekly run also rebuilds the version lines 1 and 2, `mwaeckerlin/dovecot:1` and `:2`, from their branches, so they get the security fixes of their base images like the line 3; each line is tested before it is published
 

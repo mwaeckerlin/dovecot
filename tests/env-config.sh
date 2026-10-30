@@ -120,6 +120,51 @@ if _start override \
     _expect_in_block override_db_ssl  "mysql maildb" '^[[:space:]]*(mysql_)?ssl = no$'
 fi
 
+# A container refuses to start when a value is wrong. The caller gets
+# the exit status of the init and the reason on stderr.
+_expect_refuses_to_start() {
+    local name="$1" reason="$2" out
+    shift 2
+    out=$(docker run --rm --pull=never --network none \
+              -e DB_HOST=postfixadmin-db -e DB_NAME=postfixadmin \
+              -e DB_USER=postfixadmin -e DB_PASSWORD=test-only \
+              "$@" "${IMAGE}" 2>&1)
+    if [[ "${out}" == *"${reason}"* ]]; then
+        _pass "${name}"
+    else
+        _fail "${name}" "started or gave another reason: ${out}"
+    fi
+}
+
+# SIEVE_ADMIN_SCRIPT: a script of the operator that runs before the
+# script of every user and survives every save in the webmail.
+if _start admin_sieve_default; then
+    _expect_not_in_block admin_sieve_default_absent "sieve_script admin-before" '.'
+fi
+
+if _start admin_sieve \
+       -e SIEVE_ADMIN_SCRIPT='require ["fileinto"];
+if header :contains "From" "newsletter@example.com" {
+    fileinto "Junk";
+    stop;
+}'; then
+    _expect_in_block admin_sieve_type "sieve_script admin-before" \
+        '^[[:space:]]*type = before$'
+    _expect_in_block admin_sieve_path "sieve_script admin-before" \
+        '^[[:space:]]*path = /etc/dovecot/sieve/admin-before\.sieve$'
+fi
+
+# A script that does not compile is a filter that silently does
+# nothing, which is the defect this mechanism exists to avoid.
+_expect_refuses_to_start admin_sieve_syntax "does not compile" \
+    -e SIEVE_ADMIN_SCRIPT='if header :contains "From" {'
+
+# `reject` at delivery time answers the address in MAIL FROM, which
+# unwanted mail forges.
+_expect_refuses_to_start admin_sieve_no_reject "contains \`reject\`" \
+    -e SIEVE_ADMIN_SCRIPT='require ["reject"];
+reject "go away";'
+
 echo ""
 echo "==> Environment contract results: ${PASS} passed, ${FAIL} failed"
 if [[ ${FAIL} -gt 0 ]]; then

@@ -36,6 +36,7 @@ healthcheck:
 | `DOVECOT_ALLOW_CLEARTEXT` | `no`             | Allow cleartext auth on unencrypted connections. See above.      |
 | `RSPAMD_HOST` / `RSPAMD_CTL_PORT` | `rspamd` / `11334` | Rspamd controller the IMAPSieve Bayes autotrainer pipes to (`rspamc learn_spam/learn_ham`). |
 | `SPAM_DELIVERY_MODE`      | `reject`         | `reject` / `mark` / `folder` — how spam-tagged mail is delivered (see mailservice README). |
+| `SIEVE_ADMIN_SCRIPT`      | —                | A Sieve script of the operator that runs before every user script and that the webmail cannot overwrite (`sieve_script admin-before`, `type = before`). It may route and file, never `reject`: a reject at delivery answers the sender address of the envelope, which unwanted mail forges, so a rule that refuses belongs in postfix. A script that does not compile stops the start. |
 | `DOVECOT_DEBUG_AUTH`      | `no`             | Diagnostics override: `yes` enables verbose auth debug logging (`log_debug = category=auth`). Never a production default — debug lines expose per-login details to every log reader. |
 
 ## Security trade-offs

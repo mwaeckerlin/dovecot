@@ -62,6 +62,24 @@ constexpr const char *SIEVEC    = "/usr/bin/sievec";
 constexpr const char *CONF_D    = "/etc/dovecot/conf.d";
 constexpr const char *SIEVE_DIR = "/etc/dovecot/sieve";
 
+// The home of a mail user holds his personal Sieve scripts. It must not
+// be the root of his maildir: when Dovecot creates a mailbox it walks
+// that directory and takes the active script `.dovecot.sieve` for a
+// mailbox of its own, fails on `stat(.dovecot.sieve/tmp)` with ENOTDIR
+// and aborts the whole delivery with a temporary error. Postfix then
+// defers the message and no rule of the script takes effect. Measured
+// on 2026-10-28 against Dovecot 2.4.5 / Pigeonhole 2.4.5, pinned by
+// tests/e2e/test_sieve.py::test_sieve_fileinto_creates_a_missing_folder.
+// The new home stays INSIDE the persisted volume (`VOLUME
+// /var/mail/domains`): a path beside it would live in the writable
+// layer of the container and every restart would drop every filter.
+// `.sieve` sits at the level of the domains, which Dovecot never scans
+// for mailboxes — only the directory of a single user is a mailbox root.
+constexpr const char *MAIL_ROOT   = "/var/mail/domains";
+constexpr const char *SIEVE_HOMES = "/var/mail/domains/.sieve";
+constexpr uid_t MAIL_UID = 5000;
+constexpr gid_t MAIL_GID = 5000;
+
 std::string
 env_or(const char *name, const std::string &fallback = {}) {
   const char *v = std::getenv(name);
@@ -196,6 +214,37 @@ write_auth_cleartext() {
   std::cerr << "**** auth_allow_cleartext = " << allow << std::endl;
 }
 
+// Sieve can send mail of its own: `reject` answers the sender with a
+// rejection, `vacation` replies, `redirect` forwards. This image gives
+// it no way out, and that is the design, not an omission: a message
+// that reached delivery was accepted at SMTP time, and the envelope
+// sender of unwanted mail is forged, so a rejection generated here
+// would travel to an innocent address. That is backscatter, and it gets
+// the sending host listed on the blocklists it belongs on.
+//
+// Two rules decide it (Marc, 2026-10-28): everything accepted is
+// delivered, and everything suspected of being spam is refused before
+// acceptance. The refusal happens in the rspamd milter during the SMTP
+// transaction, where the sending server still holds the message and its
+// own provider informs the real sender.
+//
+// So `submission_host` stays unset, Pigeonhole finds no sendmail, a
+// `reject` in a user script sends nothing, and the implicit keep puts
+// the message in INBOX — delivered, as the first rule requires. The
+// knob exists for a deployment that wants `vacation` or `redirect`, and
+// whoever sets it takes the backscatter with it.
+void
+write_submission_host() {
+  const std::string host = env_or("DOVECOT_SUBMISSION_HOST");
+  if (host.empty()) return;
+  check_chars("DOVECOT_SUBMISSION_HOST", host, ".-_:");
+  write_file(fs::path(CONF_D) / "10-submission-host.conf",
+             "submission_host = " + host + "\n");
+  std::cerr << "**** submission_host = " << host
+            << " — sieve reject, vacation and redirect now send mail;"
+            << " a forged envelope sender receives it" << std::endl;
+}
+
 // Verbose auth debug logging is a deliberate diagnostics override,
 // never a production default: auth debug lines expose per-login
 // details (users, mechanisms, remote IPs) to everyone who can read
@@ -253,6 +302,54 @@ write_spam_delivery_mode() {
     throw std::runtime_error("sievec " + sieve.string() + " failed: " + out);
 }
 
+// A Sieve script the operator writes, running before the script of
+// every user and surviving every save in the webmail: SnappyMail
+// manages the one active script over ManageSieve and never sees this
+// one. It routes mail for all mailboxes at once — `fileinto "Junk"`,
+// `discard`, `stop`.
+//
+// It must not `reject`. A reject runs at delivery time, when the
+// message is already accepted, so it can only answer the address in
+// MAIL FROM, which unwanted mail forges. A rule that refuses belongs
+// in Postfix, where `header_checks` answer the sending host with 5xx
+// during the SMTP transaction and this server sends nothing.
+//
+// Empty by default, so nothing changes for an existing deployment. A
+// compile error aborts the start: a filter that silently does nothing
+// is the defect this whole mechanism exists to avoid.
+void
+write_admin_sieve() {
+  const std::string script = env_or("SIEVE_ADMIN_SCRIPT");
+  const fs::path conf = fs::path(CONF_D) / "20-admin-sieve.conf";
+  const fs::path sieve = fs::path(SIEVE_DIR) / "admin-before.sieve";
+  if (script.empty()) {
+    std::error_code ec;
+    fs::remove(conf, ec);
+    fs::remove(sieve, ec);
+    fs::remove(fs::path(sieve) += "c", ec);
+    return;
+  }
+  if (script.find("reject") != std::string::npos) {
+    std::cerr << "**** ERROR: SIEVE_ADMIN_SCRIPT contains `reject`, which"
+              << " would answer the forged sender address of unwanted mail."
+              << " Use `discard` or `fileinto \"Junk\"`, or refuse the"
+              << " message in Postfix with REJECT_SHOUTING_SUBJECT and the"
+              << " other header rules." << std::endl;
+    std::exit(1);
+  }
+  write_file(sieve, script.back() == '\n' ? script : script + "\n");
+  std::string out;
+  if (run_capture({SIEVEC, sieve.c_str()}, out) != 0)
+    throw std::runtime_error("SIEVE_ADMIN_SCRIPT does not compile: " + out);
+  write_file(conf,
+             "sieve_script admin-before {\n"
+             "  type = before\n"
+             "  path = " + sieve.string() + "\n"
+             "}\n");
+  std::cerr << "**** SIEVE_ADMIN_SCRIPT active, runs before every user script"
+            << std::endl;
+}
+
 // E2: sieve_max_script_size is configurable (default 500M, following
 // the family rule «artificial limits high, but configurable and
 // documented»). An operator on a small box can lower the authenticated
@@ -288,18 +385,63 @@ write_connection_limits() {
 //   on   → sql, returning uid/gid/home AND the per-user quota limit from
 //          the PostfixAdmin `mailbox.quota` column (bytes; <=0 =
 //          unlimited → quota_storage_size stays NULL, user unaffected).
-// The sql form reuses the `mysql maildb` connection from passdb-sql.conf.
+// Move the Sieve scripts an older image left in the maildir root into
+// the separate home, once, so an upgrade keeps every filter a user had.
+// `.dovecot.sieve` is normally a relative symlink into `sieve/`, so both
+// names travel together and the link stays intact.
+void
+migrate_sieve_homes() {
+  if (!fs::is_directory(MAIL_ROOT)) return;
+  std::error_code ec;
+  for (const auto &domain : fs::directory_iterator(MAIL_ROOT, ec)) {
+    if (!domain.is_directory()) continue;
+    if (domain.path().filename() == ".sieve") continue;
+    for (const auto &user : fs::directory_iterator(domain.path(), ec)) {
+      if (!user.is_directory()) continue;
+      // A symbolic link from one mailbox to another is how an alias was
+      // built before PostfixAdmin owned them (measured 2026-10-28:
+      // atheismus.ch/atheismus -> info). Following it would move the
+      // scripts of the target into the home of the alias, and the target
+      // would then find nothing and lose every filter.
+      if (fs::is_symlink(fs::symlink_status(user.path(), ec))) continue;
+      const fs::path target = fs::path(SIEVE_HOMES)
+          / domain.path().filename() / user.path().filename();
+      for (const char *name : {"sieve", ".dovecot.sieve",
+                               ".dovecot.sieve.log"}) {
+        const fs::path from = user.path() / name;
+        if (!fs::exists(fs::symlink_status(from, ec))) continue;
+        const fs::path to = target / name;
+        if (fs::exists(fs::symlink_status(to, ec))) continue;
+        fs::create_directories(target, ec);
+        ::chown(target.c_str(), MAIL_UID, MAIL_GID);
+        ::chown(target.parent_path().c_str(), MAIL_UID, MAIL_GID);
+        fs::rename(from, to, ec);
+        if (ec) {
+          std::cerr << "**** ERROR: cannot move " << from << " -> " << to
+                    << ": " << ec.message() << std::endl;
+          ec.clear();
+          continue;
+        }
+        std::cerr << "**** moved " << from << " -> " << to << std::endl;
+      }
+    }
+  }
+  fs::create_directories(SIEVE_HOMES, ec);
+  ::chown(SIEVE_HOMES, MAIL_UID, MAIL_GID);
+}
+
 void
 write_userdb() {
   const std::string home =
-      "/var/mail/domains/%{user | domain}/%{user | username}";
+      std::string(SIEVE_HOMES) + "/%{user | domain}/%{user | username}";
   std::string content;
   if (env_or("DOVECOT_QUOTA", "no") == "yes") {
     content =
         "userdb sql {\n"
         "  sql_driver = mysql\n"
         "  query = SELECT 5000 AS uid, 5000 AS gid, "
-        "CONCAT('/var/mail/domains/', SUBSTRING_INDEX(username,'@',-1), "
+        "CONCAT('" + std::string(SIEVE_HOMES) + "/', "
+        "SUBSTRING_INDEX(username,'@',-1), "
         "'/', SUBSTRING_INDEX(username,'@',1)) AS home, "
         "CASE WHEN quota > 0 THEN CONCAT(quota, 'B') END "
         "AS quota_storage_size "
@@ -427,10 +569,13 @@ int main(int argc, char *argv[]) try {
 
   write_passdb();
   write_connection_limits();
+  migrate_sieve_homes();
   write_userdb();
   write_auth_cleartext();
+  write_submission_host();
   write_debug();
   write_spam_delivery_mode();
+  write_admin_sieve();
   write_sieve_limits();
   write_quota();
   write_ssl();
